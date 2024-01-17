@@ -53,22 +53,23 @@ def set_sharding_annotations_v1(
     task_p: The task parameters to update with sharding annotations.
     training_optimized: A bool indicating whether sharding is optimized for
       training by saving activation memory between forward and backward passes.
-    ici_mesh_shape: a 3D sequence representing the mesh shape for a slice.
-    dcn_mesh_shape: a 3D sequence representing the mesh across slices, or None.
+    ici_mesh_shape: a 4D sequence representing the mesh shape for a slice.
+    dcn_mesh_shape: a 4D sequence representing the mesh across slices, or None.
   """
   model_p = task_p.model
-  asserts.eq(len(ici_mesh_shape), 3)
+  asserts.eq(len(ici_mesh_shape), 4)
   model_p.ici_mesh_shape = ici_mesh_shape
   if dcn_mesh_shape is not None:
-    asserts.eq(len(dcn_mesh_shape), 3)
+    asserts.eq(len(dcn_mesh_shape), 4)
     model_p.dcn_mesh_shape = dcn_mesh_shape
   replica_axis = 'replica'
   data_axis = 'data'
+  data_expert_axis = 'data_expert'
   mdl_axis = 'mdl'
-  mesh_axis_names = [replica_axis, data_axis, mdl_axis]
+  mesh_axis_names = [replica_axis, data_axis, data_expert_axis, mdl_axis]
   task_p.train.inputs_split_mapping = NestedMap(
-      map_1d=((replica_axis, data_axis),),
-      map_2d=((replica_axis, data_axis), None))
+      map_1d=((replica_axis, data_axis, data_expert),),
+      map_2d=((replica_axis, data_axis, data_expert), None))
   model_p.mesh_axis_names = mesh_axis_names
   if hasattr(model_p, 'lm_tpl'):
     lm_cls = cast(
@@ -78,6 +79,7 @@ def set_sharding_annotations_v1(
         model_p.lm_tpl,
         replica_axis=replica_axis,
         data_axis=data_axis,
+        data_expert_axis=data_expert_axis,
         mdl_axis=mdl_axis,
         ici_mesh_shape=model_p.ici_mesh_shape,
         dcn_mesh_shape=model_p.dcn_mesh_shape,
