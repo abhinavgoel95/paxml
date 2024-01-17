@@ -68,8 +68,8 @@ def set_sharding_annotations_v1(
   mdl_axis = 'mdl'
   mesh_axis_names = [replica_axis, data_axis, data_expert_axis, mdl_axis]
   task_p.train.inputs_split_mapping = NestedMap(
-      map_1d=((replica_axis, data_axis, data_expert),),
-      map_2d=((replica_axis, data_axis, data_expert), None))
+      map_1d=((replica_axis, data_axis, data_expert_axis),),
+      map_2d=((replica_axis, data_axis, data_expert_axis), None))
   model_p.mesh_axis_names = mesh_axis_names
   if hasattr(model_p, 'lm_tpl'):
     lm_cls = cast(
