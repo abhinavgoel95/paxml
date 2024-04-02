@@ -41,6 +41,90 @@ NestedMap = py_utils.NestedMap
 WeightInit = base_layer.WeightInit
 
 
+def set_default_adam(
+    task_p: pax_fiddle.Config[tasks_lib.SingleTask],
+    learning_rate: float,
+    weight_decay: float,
+    *,
+    warmup_steps: int = 4000,
+    decay_start: int = 4001,
+    decay_end: int = 300000,
+) -> None:
+  """Sets the default Adam optimizer settings in the model config.
+
+  Args:
+    task_p: The task parameters to update with optimizer specs.
+    learning_rate: The learning rate to set.
+    weight_decay: The weight_decay to set.
+    warmup_steps: The number of warmup steps for the model.
+    decay_start: The step at which to start decaying the learning rate.
+    decay_end: The step at which to end the learning rate decay.
+  """
+  lp = task_p.train.learner
+  lp.loss_name = 'total_loss'
+  lp.optimizer = pax_fiddle.Config(
+      optimizers.Adam,
+      beta1=0.9,
+      beta2=0.99,
+      weight_decay=weight_decay,
+      clip_gradient_norm_to_value=5.0,
+  )
+  lp.optimizer.learning_rate = learning_rate
+  lp.optimizer.lr_schedule = pax_fiddle.Config(
+      schedules.LinearRampupExponentialDecay,
+      warmup_steps=warmup_steps,
+      decay_start=decay_start,
+      decay_end=decay_end,
+      min_ratio=0.1,
+      max=1.0,
+  )
+
+def set_sharding_annotations_v2(
+    task_p: pax_fiddle.Config[tasks_lib.SingleTask],
+    training_optimized: bool,
+    ici_mesh_shape: Sequence[int],
+    dcn_mesh_shape: Sequence[int] | None = None,
+) -> None:
+  """Sets the sharding annotations in the task config for the given mesh.
+
+  Args:
+    task_p: The task parameters to update with sharding annotations.
+    training_optimized: A bool indicating whether sharding is optimized for
+      training by saving activation memory between forward and backward passes.
+    ici_mesh_shape: a 4D sequence representing the mesh shape for a slice.
+    dcn_mesh_shape: a 4D sequence representing the mesh across slices, or None.
+  """
+  model_p = task_p.model
+  asserts.eq(len(ici_mesh_shape), 4)
+  model_p.ici_mesh_shape = ici_mesh_shape
+  if dcn_mesh_shape is not None:
+    asserts.eq(len(dcn_mesh_shape), 4)
+    model_p.dcn_mesh_shape = dcn_mesh_shape
+  replica_axis = 'replica'
+  data_axis = 'data'
+  data_expert_axis = 'data_expert'
+  mdl_axis = 'mdl'
+  mesh_axis_names = [replica_axis, data_axis, data_expert_axis, mdl_axis]
+  task_p.train.inputs_split_mapping = NestedMap(
+      map_1d=((replica_axis, data_axis, data_expert_axis),),
+      map_2d=((replica_axis, data_axis, data_expert_axis), None))
+  model_p.mesh_axis_names = mesh_axis_names
+  if hasattr(model_p, 'lm_tpl'):
+    lm_cls = cast(
+        Type[layers.TransformerLm], pax_fiddle.get_callable(model_p.lm_tpl)
+    )
+    model_p.lm_tpl = lm_cls.set_sharding_params_v2(
+        model_p.lm_tpl,
+        replica_axis=replica_axis,
+        data_axis=data_axis,
+        data_expert_axis=data_expert_axis,
+        mdl_axis=mdl_axis,
+        ici_mesh_shape=model_p.ici_mesh_shape,
+        dcn_mesh_shape=model_p.dcn_mesh_shape,
+        mesh_axis_names=mesh_axis_names,
+        training_optimized=training_optimized,
+    )
+
 def set_sharding_annotations_v1(
     task_p: pax_fiddle.Config[tasks_lib.SingleTask],
     training_optimized: bool,
@@ -536,6 +620,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
   USE_GATED_ACTIVATION = False
   DECAY_END = 100000
   USE_FP8 = False
+  USE_EXPERT_PARALLEL = None
 
   # optimizer related
   DROPOUT_PROB = 0.0
@@ -683,7 +768,14 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     task_p.train.profiler_capture_step = self.PROFILER_CAPTURE_STEP
 
     if self.ICI_MESH_SHAPE is not None:
-      set_sharding_annotations_v1(task_p, self.TRAINING_OPTIMIZED_SHARDING,
+      if self.USE_EXPERT_PARALLEL is not None:
+        # reshape ICI and DCN mesh to 4D.
+        self.ICI_MESH_SHAPE = [self.ICI_MESH_SHAPE[0], self.ICI_MESH_SHAPE[1]//self.USE_EXPERT_PARALLEL[0], self.USE_EXPERT_PARALLEL, self.ICI_MESH_SHAPE[2]]
+        self.DCN_MESH_SHAPE = [self.DCN_MESH_SHAPE[0], self.DCN_MESH_SHAPE[1]//self.USE_EXPERT_PARALLEL[1], self.USE_EXPERT_PARALLEL, self.DCN_MESH_SHAPE[2]]
+        set_sharding_annotations_v2(task_p, self.TRAINING_OPTIMIZED_SHARDING,
+                                  self.ICI_MESH_SHAPE, self.DCN_MESH_SHAPE)
+      else:
+        set_sharding_annotations_v1(task_p, self.TRAINING_OPTIMIZED_SHARDING,
                                   self.ICI_MESH_SHAPE, self.DCN_MESH_SHAPE)
     maybe_setup_moe_params(model_p.lm_tpl.stacked_transformer_tpl)
 
