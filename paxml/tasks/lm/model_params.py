@@ -620,7 +620,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
   USE_GATED_ACTIVATION = False
   DECAY_END = 100000
   USE_FP8 = False
-  USE_EXPERT_PARALLEL = None
+  USE_EXPERT_PARALLEL = False
 
   # optimizer related
   DROPOUT_PROB = 0.0
@@ -767,16 +767,13 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     task_p.train.profiler_min_duration_sec = self.PROFILER_MIN_DURATION_SEC
     task_p.train.profiler_capture_step = self.PROFILER_CAPTURE_STEP
 
-    if self.ICI_MESH_SHAPE is not None:
-      if self.USE_EXPERT_PARALLEL is not None:
-        # reshape ICI and DCN mesh to 4D.
-        self.ICI_MESH_SHAPE = [self.ICI_MESH_SHAPE[0], self.ICI_MESH_SHAPE[1]//self.USE_EXPERT_PARALLEL[0], self.USE_EXPERT_PARALLEL, self.ICI_MESH_SHAPE[2]]
-        self.DCN_MESH_SHAPE = [self.DCN_MESH_SHAPE[0], self.DCN_MESH_SHAPE[1]//self.USE_EXPERT_PARALLEL[1], self.USE_EXPERT_PARALLEL, self.DCN_MESH_SHAPE[2]]
-        set_sharding_annotations_v2(task_p, self.TRAINING_OPTIMIZED_SHARDING,
+    if self.USE_EXPERT_PARALLEL:
+      set_sharding_annotations_v2(task_p, self.TRAINING_OPTIMIZED_SHARDING,
                                   self.ICI_MESH_SHAPE, self.DCN_MESH_SHAPE)
-      else:
-        set_sharding_annotations_v1(task_p, self.TRAINING_OPTIMIZED_SHARDING,
+    else:
+      set_sharding_annotations_v1(task_p, self.TRAINING_OPTIMIZED_SHARDING,
                                   self.ICI_MESH_SHAPE, self.DCN_MESH_SHAPE)
+    
     maybe_setup_moe_params(model_p.lm_tpl.stacked_transformer_tpl)
 
     return task_p
